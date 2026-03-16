@@ -1,11 +1,15 @@
 # LLM Inference Gateway
 
-A Colab notebook demonstrating a LLM serving system with three core ideas: control/data plane separation via gRPC, KV-cache-aware request routing, and continuous batching with dynamic batch sizing.
+A Colab notebook demonstrating a LLM serving system with three core ideas: control/data plane separation, KV-cache-aware request
+routing, and continuous batching with adaptive batch sizing.
+
+All experiments run on a vLLM engine (TinyLlama-1.1B on T4 GPU)
 
 ## Requirements
 
-- Google Colab with T4 GPU
-- vLLM (`pip install vllm`)
+- Google Colab Pro with T4 GPU
+- Python 3.12
+- vLLM
 
 ## How to run
 
@@ -15,21 +19,21 @@ A Colab notebook demonstrating a LLM serving system with three core ideas: contr
 
 ## What it does
 
-**Control plane** (gRPC port 50051) handles routing and admission control. Incoming requests are hashed by prompt prefix and sent to whichever worker already has that prefix in its KV cache. If there's no cache hit, the request goes to the least-loaded worker.
+**Control plane** handles routing and admission control. Requests are hashed by prompt prefix and sent to whichever worker already has that prefix warm in its KV cache. On a cache miss, the request goes to the least-loaded worker and the mapping is recorded.
 
-**Data plane** (gRPC port 50052) runs the actual inference. Each worker wraps a vLLM engine and sits behind a continuous batching queue. The batch size adjusts automatically — it shrinks when P99 latency exceeds the target, and grows when there's headroom.
+**Data plane** runs the actual inference. Each worker wraps a `vLLM AsyncLLMEngine` with `enable_prefix_caching=True`. Requests submitted concurrently are batched automatically at the GPU level by vLLM's internal scheduler.
 
-**KV cache manager** tracks which prompt prefixes are cached on which workers. Repeated or similar prompts get routed to the same worker to avoid recomputing attention keys and values from scratch.
+**Adaptive batcher** measures p99 latency after each round and adjusts the maximum batch size — shrinking when p99 exceeds the SLO target, growing when there is headroom. 
 
 ## Experiments
 
-| # | What it measures |
+| # | Experiment |
 |---|---|
-| 1 | Cache hit rate and latency speedup for repeated prompts |
-| 2 | P50/P99 latency and throughput across concurrency levels 1–16 |
-| 3 | How batch size adapts over time relative to the P99 target |
-| 4 | gRPC round-trip verification for both servers |
+| 1 | KV-cache warm vs cold latency |
+| 2 | KV-aware routing / prefix co-location |
+| 3 | Continuous batching — throughput vs tail latency |
+| 4 | Adaptive batch sizing via p99 feedback |
 
 ## Model
 
-Defaults to `facebook/opt-125m`. To use a larger model, change the `model_name` argument in `VLLMInferenceEngine`. The T4 has 15GB VRAM and can handle models up to ~7B parameters in float16.
+Uses `TinyLlama/TinyLlama-1.1B-Chat-v1.0` by default (~2.2 GB, fits on T4's 15 GB VRAM). To use a larger model change `MODEL_ID` in Cell 3. Models up to ~7B parameters in float16 should fit on the T4.
